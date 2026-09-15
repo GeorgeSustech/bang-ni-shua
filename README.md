@@ -2,6 +2,8 @@
 
 这是一个给 macOS 设计的本地 Python 图形程序，用专用 Google Chrome 窗口操作长江雨课堂，按课程目录播放已开放且未完成的视频。它只通过网页操作播放器和读取平台显示的进度，不调用接口伪造学习记录，也不会填写签到、弹题、测验或作业。
 
+GitHub 的仓库 URL 使用 ASCII 名称 `bang-ni-shua`（GitHub 不允许中文仓库名）；项目、应用窗口和 README 名称均为“帮你刷”。
+
 语言版本：[简体中文](README.md) · [English](README.en.md)
 
 ## 1. macOS、机器型号和软件要求

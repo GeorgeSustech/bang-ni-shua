@@ -2,6 +2,8 @@
 
 This is a local Python GUI application designed for macOS. It uses a dedicated Google Chrome profile to operate the Changjiang Rain Classroom web player and plays opened, unfinished videos from a selected course. It only uses normal web-page playback and reads the progress shown by the platform; it does not forge learning records through private APIs and does not answer check-ins, questions, quizzes, or assignments.
 
+The GitHub URL uses the ASCII name `bang-ni-shua` because GitHub does not allow Chinese repository names; the project, app window, and README are named “帮你刷”.
+
 Language: [简体中文](README.md) · [English](README.en.md)
 
 ## 1. macOS, hardware, and software requirements
