@@ -59,4 +59,4 @@ if [[ ! -d "/Applications/Google Chrome.app" ]]; then
   read -r "?请安装 Chrome 后按回车继续："
 fi
 
-open "$PROJECT_DIR/雨课堂视频助手.app"
+open "$PROJECT_DIR/帮你刷.app"

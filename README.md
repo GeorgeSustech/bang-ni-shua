@@ -1,4 +1,4 @@
-# 雨课堂视频助手（macOS）
+# 帮你刷（macOS）
 
 这是一个给 macOS 设计的本地 Python 图形程序，用专用 Google Chrome 窗口操作长江雨课堂，按课程目录播放已开放且未完成的视频。它只通过网页操作播放器和读取平台显示的进度，不调用接口伪造学习记录，也不会填写签到、弹题、测验或作业。
 
@@ -21,15 +21,15 @@
 - 16 GB 内存，至少 5 GB 可用磁盘空间，接通电源
 - 最新稳定版 Google Chrome 和 Python 3.14.7 universal2
 
-仓库包含官方 Python 3.14.7 macOS universal2 安装包（约 75 MB），位于 `installers/python-3.14.7-macos11.pkg`，并附带 SHA-256 校验值。裸机用户双击 `安装环境.command`，脚本会校验并安装 Python、创建虚拟环境、安装依赖，然后启动程序；安装 Python 可能需要管理员密码。
+仓库包含官方 Python 3.14.7 macOS universal2 安装包（约 75 MB），位于 `installers/python-3.14.7-macos11.pkg`，并附带 SHA-256 校验值。裸机用户双击 `安装帮你刷环境.command`，脚本会校验并安装 Python、创建虚拟环境、安装依赖，然后启动程序；安装 Python 可能需要管理员密码。
 
 ## 2. Chrome 官方安装网页
 
-如果电脑没有 Chrome，请使用 [Google Chrome 官方安装网页](https://www.google.com/chrome/) 下载并安装。安装后把 Chrome 放在 `/Applications/Google Chrome.app`，再运行 `安装环境.command` 或双击 `雨课堂视频助手.app`。
+如果电脑没有 Chrome，请使用 [Google Chrome 官方安装网页](https://www.google.com/chrome/) 下载并安装。安装后把 Chrome 放在 `/Applications/Google Chrome.app`，再运行 `安装帮你刷环境.command` 或双击 `帮你刷.app`。
 
 ## 3. 使用方法
 
-1. 双击 `启动雨课堂助手.command`，或双击 `雨课堂视频助手.app`。
+1. 双击 `启动帮你刷.command`，或双击 `帮你刷.app`。
 2. 点击“打开登录窗口”，在专用 Chrome 窗口完成微信扫码登录。
 3. 在程序输入课程名称，点击“查找课程”，选择具体班级。
 4. 点击“核对视频列表”，确认列表后点击“开始 / 从未完成处继续”。
@@ -47,7 +47,7 @@
 ## 5. 开发和测试
 
 ```bash
-cd course-player
+cd 帮你刷
 ./.venv/bin/python -m pip install -r requirements.txt
 ./.venv/bin/python -m unittest -v test_core.py
 ./.venv/bin/python app.py

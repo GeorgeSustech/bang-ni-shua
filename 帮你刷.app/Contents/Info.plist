@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>雨课堂视频助手</string>
+	<string>帮你刷</string>
 	<key>CFBundleExecutable</key>
 	<string>launcher</string>
 	<key>CFBundleIdentifier</key>
 	<string>local.courseplayer.mac</string>
 	<key>CFBundleName</key>
-	<string>雨课堂视频助手</string>
+	<string>帮你刷</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

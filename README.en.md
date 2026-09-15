@@ -1,4 +1,4 @@
-# Rain Classroom Video Assistant (macOS)
+# 帮你刷 (macOS)
 
 This is a local Python GUI application designed for macOS. It uses a dedicated Google Chrome profile to operate the Changjiang Rain Classroom web player and plays opened, unfinished videos from a selected course. It only uses normal web-page playback and reads the progress shown by the platform; it does not forge learning records through private APIs and does not answer check-ins, questions, quizzes, or assignments.
 
@@ -21,15 +21,15 @@ Language: [简体中文](README.md) · [English](README.en.md)
 - 16 GB RAM, at least 5 GB of free SSD space, and AC power
 - The latest stable Google Chrome and Python 3.14.7 universal2
 
-The repository includes the official Python 3.14.7 macOS universal2 installer (about 75 MB) at `installers/python-3.14.7-macos11.pkg`, together with its SHA-256 checksum. On a clean Mac, double-click `安装环境.command`: it verifies and installs Python, creates a virtual environment, installs dependencies, and launches the app. Installing Python may ask for an administrator password.
+The repository includes the official Python 3.14.7 macOS universal2 installer (about 75 MB) at `installers/python-3.14.7-macos11.pkg`, together with its SHA-256 checksum. On a clean Mac, double-click `安装帮你刷环境.command`: it verifies and installs Python, creates a virtual environment, installs dependencies, and launches the app. Installing Python may ask for an administrator password.
 
 ## 2. Official Chrome installation page
 
-If Chrome is not installed, use the [official Google Chrome installation page](https://www.google.com/chrome/). After installation, place Chrome at `/Applications/Google Chrome.app`, then run `安装环境.command` or open `雨课堂视频助手.app`.
+If Chrome is not installed, use the [official Google Chrome installation page](https://www.google.com/chrome/). After installation, place Chrome at `/Applications/Google Chrome.app`, then run `安装帮你刷环境.command` or open `帮你刷.app`.
 
 ## 3. How to use
 
-1. Double-click `启动雨课堂助手.command`, or open `雨课堂视频助手.app`.
+1. Double-click `启动帮你刷.command`, or open `帮你刷.app`.
 2. Click “打开登录窗口” and complete WeChat QR-code login in the dedicated Chrome window.
 3. Enter a course name, click “查找课程”, and choose the exact class.
 4. Click “核对视频列表”, review the list, then click “开始 / 从未完成处继续”.
@@ -47,7 +47,7 @@ Runtime state is stored in `~/Library/Application Support/CoursePlayer/` with us
 ## 5. Development and tests
 
 ```bash
-cd course-player
+cd 帮你刷
 ./.venv/bin/python -m pip install -r requirements.txt
 ./.venv/bin/python -m unittest -v test_core.py
 ./.venv/bin/python app.py

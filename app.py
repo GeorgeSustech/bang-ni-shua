@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""雨课堂视频助手 — run with .venv/bin/python app.py."""
+"""帮你刷 — run with .venv/bin/python app.py."""
 from __future__ import annotations
 
 import fcntl
@@ -64,7 +64,7 @@ class Worker(threading.Thread):
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("雨课堂视频助手")
+        root.title("帮你刷")
         root.geometry("1050x780")
         root.minsize(840, 650)
         root.configure(bg="#f4f6fa")
@@ -103,7 +103,7 @@ class App:
         style.configure("Treeview.Heading", font=("PingFang SC", 11, "bold"))
         main = ttk.Frame(self.root, padding=24)
         main.pack(fill="both", expand=True)
-        ttk.Label(main, text="雨课堂视频助手", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(main, text="帮你刷", style="Title.TLabel").pack(anchor="w")
         ttk.Label(main, text="选择课程，依次播放已开放的视频。进度和结果随时可见。", style="Sub.TLabel").pack(anchor="w", pady=(3, 18))
         search = ttk.Frame(main)
         search.pack(fill="x")
@@ -305,7 +305,7 @@ class App:
         if not self.result:
             self.log("还没有退出结果；运行中可在列表查看进度。")
             return
-        name = filedialog.asksaveasfilename(title="保存结果", defaultextension=".txt", initialfile="雨课堂运行结果.txt", filetypes=[("文本文件", "*.txt")])
+        name = filedialog.asksaveasfilename(title="保存结果", defaultextension=".txt", initialfile="帮你刷运行结果.txt", filetypes=[("文本文件", "*.txt")])
         if name:
             Path(name).write_text(self.result + "\n", encoding="utf-8")
             self.log("结果已导出。")
@@ -343,7 +343,7 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         root.withdraw()
-        messagebox.showinfo("雨课堂视频助手", "程序已经运行，请切换到现有窗口。")
+        messagebox.showinfo("帮你刷", "程序已经运行，请切换到现有窗口。")
         root.destroy()
         return
     try:
