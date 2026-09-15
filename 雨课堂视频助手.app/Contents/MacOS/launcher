@@ -1,0 +1,13 @@
+#!/bin/zsh
+set -eu
+APP_PROJECT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+cd "$APP_PROJECT_DIR"
+if [[ -f "$APP_PROJECT_DIR/.env" ]]; then
+  set -a
+  source "$APP_PROJECT_DIR/.env"
+  set +a
+fi
+if [[ ! -x "$APP_PROJECT_DIR/.venv/bin/python" ]]; then
+  exec "$APP_PROJECT_DIR/安装环境.command"
+fi
+exec "$APP_PROJECT_DIR/.venv/bin/python" "$APP_PROJECT_DIR/app.py"

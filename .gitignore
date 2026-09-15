@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.log
+test-artifacts/
+.DS_Store
+state.json
+notifications.json
+last-result.json
+app.lock
+*.tmp
+.env
+.env.*
+!.env.example

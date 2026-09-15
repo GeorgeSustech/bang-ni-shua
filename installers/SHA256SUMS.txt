@@ -1,0 +1,1 @@
+70c5239ad2d62925d2947e46921d0ddd3d35be3d2f0a2d50db33da507dbcb419  python-3.14.7-macos11.pkg
