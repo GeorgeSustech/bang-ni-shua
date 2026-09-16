@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 import queue
-import shlex
 import subprocess
 import threading
 import time
@@ -15,8 +14,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 
-APP_DIR = Path.home() / "Library/Application Support/CoursePlayer"
-NOTIFY = Path.home() / ".local/bin/codex-feishu-notify"
+from platform_support import app_dir, notify_candidates, restrict, split_command
+
+APP_DIR = app_dir()
 NOTIFY_COMMAND_ENV = "COURSEPLAYER_NOTIFY_COMMAND"
 FEISHU_WEBHOOK_ENV = "COURSEPLAYER_FEISHU_WEBHOOK"
 RECHECK_SECONDS = 3600
@@ -25,10 +25,10 @@ HEARTBEAT_SECONDS = 6 * 3600
 
 def atomic_json(path: Path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.parent.chmod(0o700)
+    restrict(path.parent, 0o700)
     temporary = path.with_suffix(path.suffix + ".tmp")
     with temporary.open("w", encoding="utf-8") as f:
-        os.chmod(temporary, 0o600)
+        restrict(temporary, 0o600)
         json.dump(value, f, ensure_ascii=False, indent=2)
         f.flush()
         os.fsync(f.fileno())
@@ -102,16 +102,17 @@ class Notifier:
     @staticmethod
     def _send(message):
         # Prefer the user's existing local helper. It reads the webhook from
-        # Keychain and is never copied into this project.
-        if NOTIFY.is_file() and os.access(NOTIFY, os.X_OK):
-            result = subprocess.run([str(NOTIFY), message], capture_output=True, timeout=25)
-            if result.returncode:
-                raise RuntimeError("飞书脚本返回失败")
-            return
+        # the system keychain and is never copied into this project.
+        for candidate in notify_candidates():
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                result = subprocess.run([str(candidate), message], capture_output=True, timeout=25)
+                if result.returncode:
+                    raise RuntimeError("飞书脚本返回失败")
+                return
         # Classmates can provide their own command without changing source.
         command = os.environ.get(NOTIFY_COMMAND_ENV, "").strip()
         if command:
-            result = subprocess.run(shlex.split(command) + [message], capture_output=True, timeout=25)
+            result = subprocess.run(split_command(command) + [message], capture_output=True, timeout=25)
             if result.returncode:
                 raise RuntimeError("通知命令返回失败")
             return

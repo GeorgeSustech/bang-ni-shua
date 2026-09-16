@@ -12,15 +12,14 @@ import subprocess
 import time
 import unicodedata
 import urllib.request
-from pathlib import Path
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright, TimeoutError as BrowserTimeout
 from core import APP_DIR, Blocked, GlobalBlock, Course, Video
+from platform_support import chrome_candidates, chrome_path, detached_kwargs, restrict
 
 ORIGIN = "https://changjiang.yuketang.cn"
 INDEX = ORIGIN + "/v2/web/index"
-CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
 # Read only the resource metadata attached to the visible course directory.
 LEAF_ROWS = """es => es.map((e,index) => {
@@ -67,11 +66,13 @@ class BrowserAdapter:
     def connect(self):
         if self.browser and self.browser.is_connected():
             return
-        if not CHROME.exists():
-            raise GlobalBlock("未找到 Google Chrome，请先安装 Chrome。")
+        chrome = chrome_path()
+        if chrome is None:
+            searched = "、".join(str(p) for p in chrome_candidates()) or "系统默认位置"
+            raise GlobalBlock(f"未找到 Google Chrome，请先安装 Chrome。已查找：{searched}")
         profile = APP_DIR / "browser"
         profile.mkdir(parents=True, exist_ok=True)
-        profile.chmod(0o700)
+        restrict(profile, 0o700)
         active = profile / "DevToolsActivePort"
 
         def endpoint():
@@ -88,10 +89,10 @@ class BrowserAdapter:
 
         address = endpoint()
         if not address:
-            subprocess.Popen([str(CHROME), "--user-data-dir=" + str(profile),
+            subprocess.Popen([str(chrome), "--user-data-dir=" + str(profile),
                               "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1",
                               "--no-first-run", "--no-default-browser-check", "--new-window", ORIGIN + "/web/"],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **detached_kwargs())
             for _ in range(60):
                 self.cancel()
                 address = endpoint()
