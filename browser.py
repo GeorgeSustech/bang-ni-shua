@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
+import socket
 import subprocess
 import time
 import unicodedata
@@ -52,9 +54,31 @@ def completion(text):
     return None
 
 
+SPEED_RANGE = (0.5, 4.0)
+
+
+def normalize_speed(value) -> float:
+    """Clamp a requested playback rate; anything unusable means normal speed."""
+    try:
+        speed = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    if math.isnan(speed) or speed <= 0:
+        return 1.0
+    return min(max(speed, SPEED_RANGE[0]), SPEED_RANGE[1])
+
+
+def free_port() -> int:
+    """A loopback port Chrome can be told to listen on."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
 class BrowserAdapter:
-    def __init__(self, emit=lambda *_: None):
+    def __init__(self, emit=lambda *_: None, speed=1.0):
         self.emit = emit
+        self.speed = normalize_speed(speed)
         self.pw = None
         self.browser = None
         self.catalog = None
@@ -76,34 +100,53 @@ class BrowserAdapter:
         restrict(profile, 0o700)
         active = profile / "DevToolsActivePort"
 
-        def endpoint():
+        def probe(port):
+            address = f"http://127.0.0.1:{port}"
+            # Disable ambient HTTP proxy for loopback.
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
             try:
-                port = int(active.read_text().splitlines()[0])
-                address = f"http://127.0.0.1:{port}"
-                # Disable ambient HTTP proxy for loopback.
-                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
                 with opener.open(address + "/json/version", timeout=1) as r:
                     json.load(r)
                 return address
             except Exception:
                 return None
 
+        def chrome_endpoint():
+            """The port Chrome wrote for this profile, while that window lives."""
+            try:
+                return probe(int(active.read_text().splitlines()[0]))
+            except Exception:
+                return None
+
         flags = chrome_background_flags()
-        address = endpoint()
-        if address:
-            self._warn_stale_flags(flags)
+        # Chrome only rewrites DevToolsActivePort when it starts the browser
+        # itself, so a window we launched is found through the port we chose.
+        port, recorded = self._recorded_window()
+        address = probe(port) if port else None
         if not address:
-            subprocess.Popen([str(chrome), "--user-data-dir=" + str(profile),
-                              "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1",
-                              "--no-first-run", "--no-default-browser-check",
-                              *flags, "--new-window", ORIGIN + "/web/"],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **detached_kwargs())
-            self._note_flags(flags)
-            for _ in range(60):
+            address = chrome_endpoint()
+        if address:
+            self._warn_stale_flags(recorded, flags)
+        if not address:
+            port = free_port()
+            process = subprocess.Popen([str(chrome), "--user-data-dir=" + str(profile),
+                                        f"--remote-debugging-port={port}",
+                                        "--remote-debugging-address=127.0.0.1",
+                                        "--no-first-run", "--no-default-browser-check",
+                                        *flags, "--new-window", ORIGIN + "/web/"],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       **detached_kwargs())
+            self._remember_window(port, flags)
+            for _ in range(120):
                 self.cancel()
-                address = endpoint()
+                address = probe(port) or chrome_endpoint()
                 if address:
                     break
+                if process.poll() is not None:
+                    # Chrome forwards its command line to the window that already
+                    # owns this profile and exits, leaving that window's old port.
+                    raise GlobalBlock("专用 Chrome 窗口已在运行但没有开放调试端口，"
+                                      "请关闭该窗口后重新运行。")
                 time.sleep(.25)
         if not address:
             raise GlobalBlock("专用浏览器未能启动，请关闭专用 Chrome 窗口后重试。")
@@ -132,24 +175,29 @@ class BrowserAdapter:
                 pass
         page.on("dialog", on_dialog)
 
-    def _flags_marker(self):
-        return APP_DIR / "chrome-flags.json"
+    def _window_file(self):
+        return APP_DIR / "chrome-window.json"
 
-    def _note_flags(self, flags):
-        """Remember which flags the running window was started with."""
+    def _remember_window(self, port, flags):
+        """Record the debugging port and flags of the window this run launched."""
         try:
-            self._flags_marker().write_text(json.dumps(flags, ensure_ascii=False), encoding="utf-8")
+            self._window_file().write_text(
+                json.dumps({"port": port, "flags": flags}, ensure_ascii=False), encoding="utf-8")
         except OSError:
             pass
 
-    def _warn_stale_flags(self, flags):
+    def _recorded_window(self):
+        try:
+            data = json.loads(self._window_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None, None
+        port = data.get("port")
+        return (port if isinstance(port, int) else None), data.get("flags")
+
+    def _warn_stale_flags(self, recorded, flags):
         # A window left open from before an upgrade keeps its old flags; without
         # this note the background-throttling settings would silently not apply.
-        try:
-            running = json.loads(self._flags_marker().read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            running = None
-        if running != flags:
+        if recorded != flags:
             self.emit("log", "专用浏览器仍是旧的启动参数；关闭该 Chrome 窗口后重新运行即可生效。")
 
     def login(self):
@@ -338,8 +386,8 @@ class BrowserAdapter:
         return None
 
     def _resume(self, locator):
-        # Normal speed only. Never seek or change completion fields.
-        locator.evaluate("v => { v.playbackRate=1; }")
+        # Never seek or change completion fields; only the playback rate is set.
+        locator.evaluate("(v, rate) => { v.playbackRate = rate; }", self.speed)
         for frame in self.player.frames:
             button = frame.locator(".xt_video_player_play_btn")
             if button.count() and button.first.is_visible():
@@ -377,8 +425,10 @@ class BrowserAdapter:
             if state["position"] > last_position + .25:
                 last_position, last_motion = state["position"], time.monotonic()
                 paused_attempt = 0
-            if state["rate"] != 1:
-                locator.evaluate("v=>{v.playbackRate=1}")
+            # The platform player resets the rate after reloads and seeks, so the
+            # requested speed is re-applied on every pass of the loop.
+            if abs(state["rate"] - self.speed) > 1e-6:
+                locator.evaluate("(v, rate) => { v.playbackRate = rate; }", self.speed)
             if state["paused"] and time.monotonic() - paused_attempt > 10:
                 self._resume(locator)
                 paused_attempt = time.monotonic()

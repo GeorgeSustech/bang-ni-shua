@@ -69,6 +69,7 @@ cd D:\path\to\bang-ni-shua
 .\.venv\Scripts\python.exe cli.py courses 英语    # list classes whose name contains “英语”
 .\.venv\Scripts\python.exe cli.py videos 英语     # review the video list without playing
 .\.venv\Scripts\python.exe cli.py run 英语        # resume from the first unfinished video
+.\.venv\Scripts\python.exe cli.py run 英语 --speed 1.5   # play at 1.5x and remember the setting
 .\.venv\Scripts\python.exe cli.py status          # show saved progress and the last result
 ```
 
@@ -87,11 +88,13 @@ When a keyword matches several classes, pick one with `--class 班级关键字` 
 
 `--yes` skips the confirmation prompt, which suits Windows Task Scheduler. Running the same course again skips videos the platform already marks complete and videos that are not open yet.
 
+`--speed` sets the playback rate (`0.5`–`4`; `1` is normal speed) and remembers it in `settings.json`, so later runs reuse it; the guided flow asks once and Enter keeps the stored value. The rate is applied as `playbackRate` on the player only — nothing is seeked and no completion field is touched. Note that **the platform may not count time watched at a higher rate**, in which case the video goes through the “recheck after one hour, then report as unrecorded” path, so raising the speed is a trade-off you decide on.
+
 Exit codes: `0` all opened videos completed · `1` unfinished items remain · `2` stopped manually · `3` blocked or failed.
 
 ### 3.3 Runtime behaviour
 
-The program plays videos at normal speed in order. If it encounters an unrecognized dialog, in-video question, quiz, or a stuck page, it records the reason, sends a notification, and attempts the next video. If playback ends but the platform has not recorded completion, it refreshes the page and checks again after one hour while continuing with other videos. A status notification is sent every six hours, and an exit report is sent when the queue finishes.
+The program plays videos in order at normal speed by default. If it encounters an unrecognized dialog, in-video question, quiz, or a stuck page, it records the reason, sends a notification, and attempts the next video. If playback ends but the platform has not recorded completion, it refreshes the page and checks again after one hour while continuing with other videos. A status notification is sent every six hours, and an exit report is sent when the queue finishes.
 
 The dedicated Chrome window is no longer brought to the front while videos play: it stays where you put it and progress is reported in the terminal. Only “打开登录窗口” raises it, because the QR code has to be scanned. The launch flags also turn off Chrome's throttling of background and occluded windows, so the platform's own progress reporting is not slowed down.
 

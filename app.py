@@ -196,7 +196,8 @@ class App:
         if not name:
             self.log("请输入课程名称。")
             return
-        atomic_json(APP_DIR / "settings.json", {"course_name": name})
+        # Keep settings written elsewhere, such as the command line speed.
+        atomic_json(APP_DIR / "settings.json", {**self.settings, "course_name": name})
         self.courses = []
         self.selection.set("")
         self.dispatch("scan", name)

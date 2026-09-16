@@ -9,7 +9,7 @@
   python cli.py login                 打开专用 Chrome 窗口扫码登录
   python cli.py courses [关键字]       列出匹配的课程班级
   python cli.py videos [关键字]        核对视频列表
-  python cli.py run [关键字]           播放已开放且未完成的视频
+  python cli.py run [关键字] [--speed N]  播放已开放且未完成的视频（N 为倍速，1 为原速）
   python cli.py status                查看本地保存的进度和上次结果
 
 退出码：0 已开放视频全部完成 · 1 仍有未完成项 · 2 手动停止 · 3 受阻或出错。
@@ -24,7 +24,7 @@ import time
 import unicodedata
 from datetime import datetime
 
-from browser import BrowserAdapter, normalize
+from browser import SPEED_RANGE, BrowserAdapter, normalize, normalize_speed
 from core import (APP_DIR, STATUS, Blocked, Engine, GlobalBlock, Notifier, Store,
                   atomic_json, read_json)
 from platform_support import IS_WINDOWS, SleepInhibitor
@@ -180,8 +180,25 @@ def load_settings() -> dict:
     return load_json(APP_DIR / "settings.json", {}) or {}
 
 
-def save_course_name(name: str) -> None:
-    atomic_json(APP_DIR / "settings.json", {"course_name": name})
+def save_settings(**updates) -> None:
+    """Merge settings so values written by other entry points survive."""
+    settings = load_settings()
+    settings.update(updates)
+    atomic_json(APP_DIR / "settings.json", settings)
+
+
+def resolve_speed(value=None) -> float:
+    """Requested speed, else the saved one, else normal speed."""
+    if value is None:
+        value = load_settings().get("speed", 1.0)
+    return normalize_speed(value)
+
+
+def speed_notice(speed: float) -> str:
+    if speed == 1:
+        return "播放倍速：x1（原速）"
+    return (f"播放倍速：x{speed:g}；平台可能不把加速后的时长计入进度，"
+            f"未计入的项目会在一小时后复查并提示。")
 
 
 def load_json(path, default):
@@ -307,7 +324,7 @@ def command_courses(args) -> int:
         if not courses:
             print(f"没有找到名称包含“{name}”的课程班级。")
             return 1
-        save_course_name(name)
+        save_settings(course_name=name)
         for number, course in enumerate(courses, 1):
             print(f"{number}. {course.name} · {course.detail}")
         return 0
@@ -331,7 +348,7 @@ def command_videos(args) -> int:
         course = scan_courses(adapter, name, args.class_detail, args.index)
         if course is None:
             return 1
-        save_course_name(name)
+        save_settings(course_name=name)
         print(f"课程：{course.name} · {course.detail}")
         print_videos(adapter.list_videos(course))
         return 0
@@ -349,22 +366,26 @@ def command_run(args) -> int:
     if not name:
         print("请提供课程名称关键字，例如：python cli.py run 英语")
         return 3
+    speed = resolve_speed(args.speed)
     reporter = Reporter()
-    adapter = BrowserAdapter(reporter.emit)
+    adapter = BrowserAdapter(reporter.emit, speed=speed)
     notifier = Notifier(reporter.emit)
     try:
         course = scan_courses(adapter, name, args.class_detail, args.index)
         if course is None:
             return 1
-        save_course_name(name)
+        save_settings(course_name=name, speed=speed)
         print(f"课程：{course.name} · {course.detail}")
         videos = adapter.list_videos(course)
         print_videos(videos)
         if not args.yes:
+            print(speed_notice(speed))
             answer = ask("确认开始播放？", "y")
             if answer is None or answer.strip().casefold() not in {"y", "yes", "是", "确认", "开始"}:
                 print("已取消。")
                 return 0
+        elif speed != 1:
+            print(speed_notice(speed))
         engine = build_engine(adapter, notifier, reporter.emit, threading.Event(),
                               threading.Event())
         print("开始播放；重复运行同一课程时会从未完成处继续。")
@@ -381,6 +402,7 @@ def command_run(args) -> int:
 
 def command_status(args) -> int:
     print(f"数据目录：{APP_DIR}")
+    print(f"默认倍速：x{resolve_speed():g}")
     state = load_json(APP_DIR / "state.json", {"courses": {}})
     if not state.get("courses"):
         print("还没有保存的进度；先运行 python cli.py run 课程关键字")
@@ -445,7 +467,7 @@ def command_wizard(args) -> int:
         if not courses:
             print(f"没有找到名称包含“{name}”的课程班级。")
             return 1
-        save_course_name(name)
+        save_settings(course_name=name)
         if len(courses) == 1:
             course = courses[0]
             print(f"课程：{course.name} · {course.detail}")
@@ -460,6 +482,14 @@ def command_wizard(args) -> int:
             course = courses[int(picked) - 1]
         print()
         print_videos(adapter.list_videos(course))
+        typed = ask(f"\n播放倍速（{SPEED_RANGE[0]:g}–{SPEED_RANGE[1]:g}，回车保持）",
+                    f"{resolve_speed():g}")
+        if typed is None:
+            print("已取消。")
+            return 0
+        adapter.speed = normalize_speed(typed)
+        save_settings(speed=adapter.speed)
+        print(speed_notice(adapter.speed))
         answer = ask("\n确认开始播放？", "y")
         if answer is None or answer.strip().casefold() not in {"y", "yes", "是", "确认", "开始"}:
             print("已取消。")
@@ -494,6 +524,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--class", dest="class_detail", default="", help="班级名称关键字，用于排除同名课程")
     run.add_argument("--index", type=int, default=0, help="直接选择第几个匹配班级（从 1 开始）")
     run.add_argument("--yes", action="store_true", help="不询问，直接开始（适合计划任务）")
+    run.add_argument("--speed", type=float, default=None,
+                     help=f"播放倍速，1 为原速（{SPEED_RANGE[0]:g}–{SPEED_RANGE[1]:g}，默认沿用上次保存的值）")
     sub.add_parser("status", help="查看本地保存的进度和上次结果")
     return parser
 
