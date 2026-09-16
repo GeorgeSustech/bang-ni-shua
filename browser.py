@@ -7,20 +7,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
+import socket
 import subprocess
 import time
 import unicodedata
 import urllib.request
-from pathlib import Path
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright, TimeoutError as BrowserTimeout
 from core import APP_DIR, Blocked, GlobalBlock, Course, Video
+from platform_support import (chrome_background_flags, chrome_candidates, chrome_path,
+                              detached_kwargs, restrict)
 
 ORIGIN = "https://changjiang.yuketang.cn"
 INDEX = ORIGIN + "/v2/web/index"
-CHROME = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
 # Read only the resource metadata attached to the visible course directory.
 LEAF_ROWS = """es => es.map((e,index) => {
@@ -52,9 +54,78 @@ def completion(text):
     return None
 
 
+# The platform's own speed control offers 0.5X to 2.0X; asking for anything
+# else picks the nearest option it actually provides.
+SPEED_RANGE = (0.5, 2.0)
+DEFAULT_SPEED = 2.0
+
+# The player only applies a speed click when the pointer moved inside its speed
+# button first: the handler is guarded by the distance between mouseover and
+# mousemove. Playwright's click moves the pointer straight to the target, so the
+# events are replayed here instead of relying on real mouse movement.
+SPEED_JS = """(requested) => {
+  const button = document.querySelector('xt-speedbutton');
+  if (!button) return null;
+  const options = [...button.querySelectorAll('li[data-speed]')]
+    .sort((a, b) => parseFloat(a.getAttribute('data-speed')) - parseFloat(b.getAttribute('data-speed')));
+  let best = null, bestGap = Infinity;
+  for (const option of options) {
+    const gap = Math.abs(parseFloat(option.getAttribute('data-speed')) - requested);
+    if (gap < bestGap - 1e-9) { best = option; bestGap = gap; }
+  }
+  if (!best) return null;
+  const applied = parseFloat(best.getAttribute('data-speed'));
+  if (best.classList.contains('xt_video_player_common_active')) return applied;
+  const opts = {bubbles: true, cancelable: true, composed: true, view: window};
+  button.dispatchEvent(new MouseEvent('mouseover', {...opts, clientX: 100, clientY: 100}));
+  button.dispatchEvent(new MouseEvent('mousemove', {...opts, clientX: 160, clientY: 130}));
+  best.dispatchEvent(new MouseEvent('click', opts));
+  return applied;
+}"""
+
+# The player samples video.muted on every timeupdate and restores its own
+# volume, so muting has to be enforced on the element itself: the accessors are
+# shadowed and the real media volume is driven to zero.
+MUTE_JS = """() => {
+  const volume = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'volume');
+  const muted = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted');
+  document.querySelectorAll('video').forEach(v => {
+    if (v.__coursePlayerMuted) return;
+    v.__coursePlayerMuted = true;
+    Object.defineProperty(v, 'volume', {configurable: true,
+      get() { return 0; }, set() { volume.set.call(v, 0); }});
+    Object.defineProperty(v, 'muted', {configurable: true,
+      get() { return true; }, set() { muted.set.call(v, true); }});
+    volume.set.call(v, 0);
+    muted.set.call(v, true);
+  });
+}"""
+
+
+def normalize_speed(value) -> float:
+    """Clamp a requested playback rate; anything unusable means the default."""
+    try:
+        speed = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_SPEED
+    if math.isnan(speed) or speed <= 0:
+        return DEFAULT_SPEED
+    return min(max(speed, SPEED_RANGE[0]), SPEED_RANGE[1])
+
+
+def free_port() -> int:
+    """A loopback port Chrome can be told to listen on."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
 class BrowserAdapter:
-    def __init__(self, emit=lambda *_: None):
+    def __init__(self, emit=lambda *_: None, speed=DEFAULT_SPEED, mute=True):
         self.emit = emit
+        self.speed = normalize_speed(speed)
+        self.mute = mute
+        self.effective_speed = None
         self.pw = None
         self.browser = None
         self.catalog = None
@@ -67,36 +138,67 @@ class BrowserAdapter:
     def connect(self):
         if self.browser and self.browser.is_connected():
             return
-        if not CHROME.exists():
-            raise GlobalBlock("未找到 Google Chrome，请先安装 Chrome。")
+        chrome = chrome_path()
+        if chrome is None:
+            searched = "、".join(str(p) for p in chrome_candidates()) or "系统默认位置"
+            raise GlobalBlock(f"未找到 Google Chrome，请先安装 Chrome。已查找：{searched}")
         profile = APP_DIR / "browser"
         profile.mkdir(parents=True, exist_ok=True)
-        profile.chmod(0o700)
+        restrict(profile, 0o700)
         active = profile / "DevToolsActivePort"
 
-        def endpoint():
+        def probe(port):
+            address = f"http://127.0.0.1:{port}"
+            # Disable ambient HTTP proxy for loopback.
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
             try:
-                port = int(active.read_text().splitlines()[0])
-                address = f"http://127.0.0.1:{port}"
-                # Disable ambient HTTP proxy for loopback.
-                opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
                 with opener.open(address + "/json/version", timeout=1) as r:
                     json.load(r)
                 return address
             except Exception:
                 return None
 
-        address = endpoint()
+        def chrome_endpoint():
+            """The port Chrome wrote for this profile, while that window lives."""
+            try:
+                return probe(int(active.read_text().splitlines()[0]))
+            except Exception:
+                return None
+
+        flags = chrome_background_flags()
+        # Chrome only rewrites DevToolsActivePort when it starts the browser
+        # itself, so a window we launched is found through the port we chose.
+        port, recorded = self._recorded_window()
+        address = probe(port) if port else None
         if not address:
-            subprocess.Popen([str(CHROME), "--user-data-dir=" + str(profile),
-                              "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1",
-                              "--no-first-run", "--no-default-browser-check", "--new-window", ORIGIN + "/web/"],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-            for _ in range(60):
+            address = chrome_endpoint()
+        if address:
+            self._warn_stale_flags(recorded, flags)
+        if not address:
+            port = free_port()
+            process = subprocess.Popen([str(chrome), "--user-data-dir=" + str(profile),
+                                        f"--remote-debugging-port={port}",
+                                        "--remote-debugging-address=127.0.0.1",
+                                        "--no-first-run", "--no-default-browser-check",
+                                        *flags, "--new-window", ORIGIN + "/web/"],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       **detached_kwargs())
+            for _ in range(120):
                 self.cancel()
-                address = endpoint()
+                address = probe(port)
+                if address:
+                    # Only a window this run really started is recorded, so a
+                    # forwarded launch cannot overwrite a working port.
+                    self._remember_window(port, flags)
+                    break
+                address = chrome_endpoint()
                 if address:
                     break
+                if process.poll() is not None:
+                    # Chrome forwards its command line to the window that already
+                    # owns this profile and exits, leaving that window's old port.
+                    raise GlobalBlock("专用 Chrome 窗口已在运行但没有开放调试端口，"
+                                      "请关闭该窗口后重新运行。")
                 time.sleep(.25)
         if not address:
             raise GlobalBlock("专用浏览器未能启动，请关闭专用 Chrome 窗口后重试。")
@@ -124,6 +226,31 @@ class BrowserAdapter:
             except Exception:
                 pass
         page.on("dialog", on_dialog)
+
+    def _window_file(self):
+        return APP_DIR / "chrome-window.json"
+
+    def _remember_window(self, port, flags):
+        """Record the debugging port and flags of the window this run launched."""
+        try:
+            self._window_file().write_text(
+                json.dumps({"port": port, "flags": flags}, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _recorded_window(self):
+        try:
+            data = json.loads(self._window_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None, None
+        port = data.get("port")
+        return (port if isinstance(port, int) else None), data.get("flags")
+
+    def _warn_stale_flags(self, recorded, flags):
+        # A window left open from before an upgrade keeps its old flags; without
+        # this note the background-throttling settings would silently not apply.
+        if recorded != flags:
+            self.emit("log", "专用浏览器仍是旧的启动参数；关闭该 Chrome 窗口后重新运行即可生效。")
 
     def login(self):
         self.connect()
@@ -163,7 +290,6 @@ class BrowserAdapter:
                 detail = c["detail"]
                 key = hashlib.sha256((c["name"] + "|" + detail).encode()).hexdigest()[:20]
                 result.append(Course(key, c["name"], "", detail))
-        self.catalog.bring_to_front()
         return result
 
     def open_course(self, course):
@@ -272,7 +398,6 @@ class BrowserAdapter:
             self.catalog.wait_for_timeout(250)
         if not self.player:
             raise Blocked("视频窗口未打开，可能被弹窗拦截。")
-        self.player.bring_to_front()
         video.url = self.player.url
         end = time.monotonic() + 45
         while time.monotonic() < end:
@@ -313,14 +438,53 @@ class BrowserAdapter:
         return None
 
     def _resume(self, locator):
-        # Normal speed only. Never seek or change completion fields.
-        locator.evaluate("v => { v.playbackRate=1; }")
+        # Never seek or change completion fields; the platform keeps its speed.
         for frame in self.player.frames:
             button = frame.locator(".xt_video_player_play_btn")
             if button.count() and button.first.is_visible():
                 button.first.click(timeout=3000)
                 return
         locator.evaluate("v => v.play().then(()=>true).catch(()=>false)")
+
+    def _mute_videos(self):
+        """Keep the dedicated window silent; audio is not needed to track progress."""
+        if not self.player or self.player.is_closed():
+            return
+        for frame in self.player.frames:
+            try:
+                frame.evaluate(MUTE_JS)
+            except Exception:
+                pass
+
+    def _apply_speed(self):
+        """Select the requested speed in the platform's own control.
+
+        Setting video.playbackRate directly does not survive: the player
+        re-applies its internal speed on every timeupdate. Driving the control
+        updates that internal value, which the platform keeps and reports.
+        """
+        if not self.player or self.player.is_closed():
+            return None
+        for frame in self.player.frames:
+            try:
+                applied = frame.evaluate(SPEED_JS, self.speed)
+            except Exception:
+                continue
+            if applied:
+                return float(applied)
+        return None
+
+    def _prepare_playback(self):
+        """Mute the player and pick the requested speed before watching."""
+        self.effective_speed = None
+        if self.mute:
+            self._mute_videos()
+        if self.speed != 1:
+            self.effective_speed = self._apply_speed()
+            if self.effective_speed is None:
+                self.emit("log", "未找到平台的倍速控件，本节按原速播放。")
+            elif abs(self.effective_speed - self.speed) > 1e-6:
+                self.emit("log", f"平台倍速只有 x{self.effective_speed:g} 档，已按该档位播放。")
 
     def play(self, video, tick, progress):
         self.cancel = tick
@@ -332,6 +496,7 @@ class BrowserAdapter:
     def _play(self, video, tick, progress):
         retries = 0
         locator = self._open_video(video)
+        self._prepare_playback()
         last_position = -1
         last_motion = time.monotonic()
         paused_attempt = 0
@@ -344,7 +509,7 @@ class BrowserAdapter:
             blocker = self._blocker()
             if blocker:
                 raise Blocked(blocker)
-            state = locator.evaluate("v=>({position:v.currentTime,duration:Number.isFinite(v.duration)?v.duration:0,paused:v.paused,ended:v.ended,error:!!v.error,rate:v.playbackRate})")
+            state = locator.evaluate("v=>({position:v.currentTime,duration:Number.isFinite(v.duration)?v.duration:0,paused:v.paused,ended:v.ended,error:!!v.error,rate:v.playbackRate,muted:v.muted})")
             progress(state["position"], state["duration"])
             if state["ended"] and state["duration"] > 0:
                 self.player.wait_for_timeout(2500)
@@ -352,9 +517,13 @@ class BrowserAdapter:
             if state["position"] > last_position + .25:
                 last_position, last_motion = state["position"], time.monotonic()
                 paused_attempt = 0
-            if state["rate"] != 1:
-                locator.evaluate("v=>{v.playbackRate=1}")
-            if state["paused"] and time.monotonic() - paused_attempt > 10:
+            if self.mute and state["muted"] is False:
+                locator.evaluate("v => { v.muted = true; }")
+            if self.effective_speed and abs(state["rate"] - self.effective_speed) > 0.01:
+                self._apply_speed()
+            # The platform pauses playback when the window loses focus, so a
+            # background window is resumed promptly instead of waiting.
+            if state["paused"] and time.monotonic() - paused_attempt > 5:
                 self._resume(locator)
                 paused_attempt = time.monotonic()
             if state["error"] or time.monotonic() - last_motion > 90:
@@ -363,6 +532,7 @@ class BrowserAdapter:
                 retries += 1
                 self.emit("log", f"{video.name}：播放卡顿，重新打开（{retries}/2）。")
                 locator = self._open_video(video)
+                self._prepare_playback()
                 last_position, last_motion = -1, time.monotonic()
             # Pump Playwright events; user Stop and Pause are checked every second.
             self.player.wait_for_timeout(1000)
@@ -373,8 +543,6 @@ class BrowserAdapter:
             self.catalog.reload(wait_until="domcontentloaded")
         rows = self._rows()
         row = next((r for r in rows if r["id"] == video.id), None)
-        if self.player and not self.player.is_closed():
-            self.player.bring_to_front()
         return completion(row["progress"]) if row else None
 
     def pause_video(self):

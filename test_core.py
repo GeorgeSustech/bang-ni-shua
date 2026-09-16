@@ -3,7 +3,7 @@ import threading
 import unittest
 from pathlib import Path
 
-from browser import completion, normalize
+from browser import DEFAULT_SPEED, SPEED_RANGE, completion, normalize, normalize_speed
 from core import (Blocked, Course, Engine, GlobalBlock, HEARTBEAT_SECONDS,
                   Notifier, RECHECK_SECONDS, Store, Video, read_json)
 
@@ -130,6 +130,17 @@ class EngineTests(unittest.TestCase):
         self.assertFalse(completion("99%"))
         self.assertIsNone(completion("页面加载中"))
         self.assertEqual(normalize("英语（博士）"), normalize("英语 (博士)"))
+
+    def test_playback_speed_is_clamped_and_defaults_to_the_platform_maximum(self):
+        self.assertEqual(DEFAULT_SPEED, SPEED_RANGE[1])
+        self.assertEqual(normalize_speed(1.5), 1.5)
+        self.assertEqual(normalize_speed("2"), 2.0)
+        self.assertEqual(normalize_speed(0), DEFAULT_SPEED)
+        self.assertEqual(normalize_speed(-3), DEFAULT_SPEED)
+        self.assertEqual(normalize_speed(None), DEFAULT_SPEED)
+        self.assertEqual(normalize_speed("快"), DEFAULT_SPEED)
+        self.assertEqual(normalize_speed(99), SPEED_RANGE[1])
+        self.assertEqual(normalize_speed(0.1), 0.5)
 
 
 class NotificationTests(unittest.TestCase):
