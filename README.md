@@ -55,7 +55,8 @@ GitHub 的仓库 URL 使用 ASCII 名称 `bang-ni-shua`（GitHub 不允许中文
 1. 双击 `启动帮你刷.command`，或双击 `帮你刷.app`。
 2. 点击“打开登录窗口”，在专用 Chrome 窗口完成微信扫码登录。
 3. 在程序输入课程名称，点击“查找课程”，选择具体班级。
-4. 点击“核对视频列表”，确认列表后点击“开始 / 从未完成处继续”。
+4. 点击“核对视频列表”，确认列表后点击“开始 / 从未完成处继续”。<img width="2300" height="1824" alt="GUI_demo" src="https://github.com/user-attachments/assets/4a14b4ed-6dac-45b4-8388-98093dd6658f" />
+
 
 ### 3.2 Windows 命令行版
 
