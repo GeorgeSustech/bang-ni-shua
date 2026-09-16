@@ -26,7 +26,7 @@ import time
 import unicodedata
 from datetime import datetime
 
-from browser import SPEED_RANGE, BrowserAdapter, normalize, normalize_speed
+from browser import DEFAULT_SPEED, SPEED_RANGE, BrowserAdapter, normalize, normalize_speed
 from core import (APP_DIR, STATUS, Blocked, Engine, GlobalBlock, Notifier, Store,
                   atomic_json, read_json)
 from platform_support import IS_WINDOWS, SleepInhibitor, chrome_path
@@ -190,16 +190,16 @@ def save_settings(**updates) -> None:
 
 
 def resolve_speed(value=None) -> float:
-    """Requested speed, else the saved one, else normal speed."""
+    """Requested speed, else the saved one, else the default."""
     if value is None:
-        value = load_settings().get("speed", 1.0)
+        value = load_settings().get("speed", DEFAULT_SPEED)
     return normalize_speed(value)
 
 
 def speed_notice(speed: float) -> str:
     if speed == 1:
         return "播放倍速：x1（原速）"
-    return (f"播放倍速：x{speed:g}；平台可能不把加速后的时长计入进度，"
+    return (f"播放倍速：x{speed:g}（用雨课堂自带的倍速控件，最高 2X）；"
             f"未计入的项目会在一小时后复查并提示。")
 
 
@@ -370,7 +370,7 @@ def command_run(args) -> int:
         return 3
     speed = resolve_speed(args.speed)
     reporter = Reporter()
-    adapter = BrowserAdapter(reporter.emit, speed=speed)
+    adapter = BrowserAdapter(reporter.emit, speed=speed, mute=not args.sound)
     notifier = Notifier(reporter.emit)
     try:
         course = scan_courses(adapter, name, args.class_detail, args.index)
@@ -489,7 +489,7 @@ def ask(question: str, default: str = "") -> str | None:
 def home_screen(name: str, speed: float) -> None:
     """Show what the next run would use, before anything touches the browser."""
     print()
-    print(f"课程关键字：{name or '（未设置）'}　·　倍速：x{speed:g}")
+    print(f"课程关键字：{name or '（未设置）'}　·　倍速：x{speed:g}　·　声音：静音")
     last = load_json(APP_DIR / "last-result.json", {})
     if last:
         when = datetime.fromtimestamp(last.get("time", 0)).strftime("%Y-%m-%d %H:%M")
@@ -622,6 +622,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--yes", action="store_true", help="不询问，直接开始（适合计划任务）")
     run.add_argument("--speed", type=float, default=None,
                      help=f"播放倍速，1 为原速（{SPEED_RANGE[0]:g}–{SPEED_RANGE[1]:g}，默认沿用上次保存的值）")
+    run.add_argument("--sound", action="store_true", help="不静音（默认静音播放）")
     sub.add_parser("status", help="查看本地保存的进度和上次结果")
     doctor = sub.add_parser("doctor", help="显示运行环境信息，排查输入、浏览器等问题")
     doctor.add_argument("--input", dest="input_probe", action="store_true",
@@ -643,6 +644,7 @@ def main(argv=None) -> int:
         args.index = 0
         args.yes = False
         args.speed = None
+        args.sound = False
         args.input_probe = False
     try:
         return handler(args)

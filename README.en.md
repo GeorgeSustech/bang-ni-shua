@@ -71,6 +71,7 @@ cd D:\path\to\bang-ni-shua
 .\.venv\Scripts\python.exe cli.py videos 英语     # review the video list without playing
 .\.venv\Scripts\python.exe cli.py run 英语        # resume from the first unfinished video
 .\.venv\Scripts\python.exe cli.py run 英语 --speed 1.5   # play at 1.5x and remember the setting
+.\.venv\Scripts\python.exe cli.py run 英语 --sound        # keep audio (playback is muted by default)
 .\.venv\Scripts\python.exe cli.py status          # show saved progress and the last result
 ```
 
@@ -91,13 +92,17 @@ When a keyword matches several classes, pick one with `--class 班级关键字` 
 
 `--yes` skips the confirmation prompt, which suits Windows Task Scheduler. Running the same course again skips videos the platform already marks complete and videos that are not open yet.
 
-`--speed` sets the playback rate (`0.5`–`4`; `1` is normal speed) and remembers it in `settings.json`, so later runs reuse it; the guided flow asks once and Enter keeps the stored value. The rate is applied as `playbackRate` on the player only — nothing is seeked and no completion field is touched. Note that **the platform may not count time watched at a higher rate**, in which case the video goes through the “recheck after one hour, then report as unrecorded” path, so raising the speed is a trade-off you decide on.
+`--speed` sets the playback rate (`0.5`–`2`; `1` is normal speed), **defaults to 2x**, and is remembered in `settings.json` for later runs; the guided flow can change it too, and Enter keeps the stored value. The program drives **Rain Classroom's own speed control** (0.5X / 1.00X / 1.25X / 1.50X / 2.00X), so the platform tracks playback at its own setting — nothing is seeked and no completion field is touched. A rate that is not one of those steps picks the nearest step and says so.
+
+Playback is **muted by default** (the player volume is pinned to 0); add `--sound` when you want audio.
 
 Exit codes: `0` all opened videos completed · `1` unfinished items remain · `2` stopped manually · `3` blocked or failed.
 
 ### 3.3 Runtime behaviour
 
-The program plays videos in order at normal speed by default. If it encounters an unrecognized dialog, in-video question, quiz, or a stuck page, it records the reason, sends a notification, and attempts the next video. If playback ends but the platform has not recorded completion, it refreshes the page and checks again after one hour while continuing with other videos. A status notification is sent every six hours, and an exit report is sent when the queue finishes.
+The program plays videos in order at 2x, muted, by default. If it encounters an unrecognized dialog, in-video question, quiz, or a stuck page, it records the reason, sends a notification, and attempts the next video. If playback ends but the platform has not recorded completion, it refreshes the page and checks again after one hour while continuing with other videos. A status notification is sent every six hours, and an exit report is sent when the queue finishes.
+
+Rain Classroom's player has anti-idling logic: it pauses playback when the window loses focus or is hidden. The program notices the pause and resumes within a few seconds, so the dedicated Chrome window can stay in the background.
 
 The dedicated Chrome window is no longer brought to the front while videos play: it stays where you put it and progress is reported in the terminal. Only “打开登录窗口” raises it, because the QR code has to be scanned. The launch flags also turn off Chrome's throttling of background and occluded windows, so the platform's own progress reporting is not slowed down.
 

@@ -54,17 +54,62 @@ def completion(text):
     return None
 
 
-SPEED_RANGE = (0.5, 4.0)
+# The platform's own speed control offers 0.5X to 2.0X; asking for anything
+# else picks the nearest option it actually provides.
+SPEED_RANGE = (0.5, 2.0)
+DEFAULT_SPEED = 2.0
+
+# The player only applies a speed click when the pointer moved inside its speed
+# button first: the handler is guarded by the distance between mouseover and
+# mousemove. Playwright's click moves the pointer straight to the target, so the
+# events are replayed here instead of relying on real mouse movement.
+SPEED_JS = """(requested) => {
+  const button = document.querySelector('xt-speedbutton');
+  if (!button) return null;
+  const options = [...button.querySelectorAll('li[data-speed]')]
+    .sort((a, b) => parseFloat(a.getAttribute('data-speed')) - parseFloat(b.getAttribute('data-speed')));
+  let best = null, bestGap = Infinity;
+  for (const option of options) {
+    const gap = Math.abs(parseFloat(option.getAttribute('data-speed')) - requested);
+    if (gap < bestGap - 1e-9) { best = option; bestGap = gap; }
+  }
+  if (!best) return null;
+  const applied = parseFloat(best.getAttribute('data-speed'));
+  if (best.classList.contains('xt_video_player_common_active')) return applied;
+  const opts = {bubbles: true, cancelable: true, composed: true, view: window};
+  button.dispatchEvent(new MouseEvent('mouseover', {...opts, clientX: 100, clientY: 100}));
+  button.dispatchEvent(new MouseEvent('mousemove', {...opts, clientX: 160, clientY: 130}));
+  best.dispatchEvent(new MouseEvent('click', opts));
+  return applied;
+}"""
+
+# The player samples video.muted on every timeupdate and restores its own
+# volume, so muting has to be enforced on the element itself: the accessors are
+# shadowed and the real media volume is driven to zero.
+MUTE_JS = """() => {
+  const volume = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'volume');
+  const muted = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted');
+  document.querySelectorAll('video').forEach(v => {
+    if (v.__coursePlayerMuted) return;
+    v.__coursePlayerMuted = true;
+    Object.defineProperty(v, 'volume', {configurable: true,
+      get() { return 0; }, set() { volume.set.call(v, 0); }});
+    Object.defineProperty(v, 'muted', {configurable: true,
+      get() { return true; }, set() { muted.set.call(v, true); }});
+    volume.set.call(v, 0);
+    muted.set.call(v, true);
+  });
+}"""
 
 
 def normalize_speed(value) -> float:
-    """Clamp a requested playback rate; anything unusable means normal speed."""
+    """Clamp a requested playback rate; anything unusable means the default."""
     try:
         speed = float(value)
     except (TypeError, ValueError):
-        return 1.0
+        return DEFAULT_SPEED
     if math.isnan(speed) or speed <= 0:
-        return 1.0
+        return DEFAULT_SPEED
     return min(max(speed, SPEED_RANGE[0]), SPEED_RANGE[1])
 
 
@@ -76,9 +121,11 @@ def free_port() -> int:
 
 
 class BrowserAdapter:
-    def __init__(self, emit=lambda *_: None, speed=1.0):
+    def __init__(self, emit=lambda *_: None, speed=DEFAULT_SPEED, mute=True):
         self.emit = emit
         self.speed = normalize_speed(speed)
+        self.mute = mute
+        self.effective_speed = None
         self.pw = None
         self.browser = None
         self.catalog = None
@@ -136,10 +183,15 @@ class BrowserAdapter:
                                         *flags, "--new-window", ORIGIN + "/web/"],
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                        **detached_kwargs())
-            self._remember_window(port, flags)
             for _ in range(120):
                 self.cancel()
-                address = probe(port) or chrome_endpoint()
+                address = probe(port)
+                if address:
+                    # Only a window this run really started is recorded, so a
+                    # forwarded launch cannot overwrite a working port.
+                    self._remember_window(port, flags)
+                    break
+                address = chrome_endpoint()
                 if address:
                     break
                 if process.poll() is not None:
@@ -386,14 +438,53 @@ class BrowserAdapter:
         return None
 
     def _resume(self, locator):
-        # Never seek or change completion fields; only the playback rate is set.
-        locator.evaluate("(v, rate) => { v.playbackRate = rate; }", self.speed)
+        # Never seek or change completion fields; the platform keeps its speed.
         for frame in self.player.frames:
             button = frame.locator(".xt_video_player_play_btn")
             if button.count() and button.first.is_visible():
                 button.first.click(timeout=3000)
                 return
         locator.evaluate("v => v.play().then(()=>true).catch(()=>false)")
+
+    def _mute_videos(self):
+        """Keep the dedicated window silent; audio is not needed to track progress."""
+        if not self.player or self.player.is_closed():
+            return
+        for frame in self.player.frames:
+            try:
+                frame.evaluate(MUTE_JS)
+            except Exception:
+                pass
+
+    def _apply_speed(self):
+        """Select the requested speed in the platform's own control.
+
+        Setting video.playbackRate directly does not survive: the player
+        re-applies its internal speed on every timeupdate. Driving the control
+        updates that internal value, which the platform keeps and reports.
+        """
+        if not self.player or self.player.is_closed():
+            return None
+        for frame in self.player.frames:
+            try:
+                applied = frame.evaluate(SPEED_JS, self.speed)
+            except Exception:
+                continue
+            if applied:
+                return float(applied)
+        return None
+
+    def _prepare_playback(self):
+        """Mute the player and pick the requested speed before watching."""
+        self.effective_speed = None
+        if self.mute:
+            self._mute_videos()
+        if self.speed != 1:
+            self.effective_speed = self._apply_speed()
+            if self.effective_speed is None:
+                self.emit("log", "未找到平台的倍速控件，本节按原速播放。")
+            elif abs(self.effective_speed - self.speed) > 1e-6:
+                self.emit("log", f"平台倍速只有 x{self.effective_speed:g} 档，已按该档位播放。")
 
     def play(self, video, tick, progress):
         self.cancel = tick
@@ -405,6 +496,7 @@ class BrowserAdapter:
     def _play(self, video, tick, progress):
         retries = 0
         locator = self._open_video(video)
+        self._prepare_playback()
         last_position = -1
         last_motion = time.monotonic()
         paused_attempt = 0
@@ -417,7 +509,7 @@ class BrowserAdapter:
             blocker = self._blocker()
             if blocker:
                 raise Blocked(blocker)
-            state = locator.evaluate("v=>({position:v.currentTime,duration:Number.isFinite(v.duration)?v.duration:0,paused:v.paused,ended:v.ended,error:!!v.error,rate:v.playbackRate})")
+            state = locator.evaluate("v=>({position:v.currentTime,duration:Number.isFinite(v.duration)?v.duration:0,paused:v.paused,ended:v.ended,error:!!v.error,rate:v.playbackRate,muted:v.muted})")
             progress(state["position"], state["duration"])
             if state["ended"] and state["duration"] > 0:
                 self.player.wait_for_timeout(2500)
@@ -425,11 +517,13 @@ class BrowserAdapter:
             if state["position"] > last_position + .25:
                 last_position, last_motion = state["position"], time.monotonic()
                 paused_attempt = 0
-            # The platform player resets the rate after reloads and seeks, so the
-            # requested speed is re-applied on every pass of the loop.
-            if abs(state["rate"] - self.speed) > 1e-6:
-                locator.evaluate("(v, rate) => { v.playbackRate = rate; }", self.speed)
-            if state["paused"] and time.monotonic() - paused_attempt > 10:
+            if self.mute and state["muted"] is False:
+                locator.evaluate("v => { v.muted = true; }")
+            if self.effective_speed and abs(state["rate"] - self.effective_speed) > 0.01:
+                self._apply_speed()
+            # The platform pauses playback when the window loses focus, so a
+            # background window is resumed promptly instead of waiting.
+            if state["paused"] and time.monotonic() - paused_attempt > 5:
                 self._resume(locator)
                 paused_attempt = time.monotonic()
             if state["error"] or time.monotonic() - last_motion > 90:
@@ -438,6 +532,7 @@ class BrowserAdapter:
                 retries += 1
                 self.emit("log", f"{video.name}：播放卡顿，重新打开（{retries}/2）。")
                 locator = self._open_video(video)
+                self._prepare_playback()
                 last_position, last_motion = -1, time.monotonic()
             # Pump Playwright events; user Stop and Pause are checked every second.
             self.player.wait_for_timeout(1000)
