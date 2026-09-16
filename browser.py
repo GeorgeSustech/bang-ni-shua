@@ -16,7 +16,8 @@ from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright, TimeoutError as BrowserTimeout
 from core import APP_DIR, Blocked, GlobalBlock, Course, Video
-from platform_support import chrome_candidates, chrome_path, detached_kwargs, restrict
+from platform_support import (chrome_background_flags, chrome_candidates, chrome_path,
+                              detached_kwargs, restrict)
 
 ORIGIN = "https://changjiang.yuketang.cn"
 INDEX = ORIGIN + "/v2/web/index"
@@ -87,12 +88,17 @@ class BrowserAdapter:
             except Exception:
                 return None
 
+        flags = chrome_background_flags()
         address = endpoint()
+        if address:
+            self._warn_stale_flags(flags)
         if not address:
             subprocess.Popen([str(chrome), "--user-data-dir=" + str(profile),
                               "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1",
-                              "--no-first-run", "--no-default-browser-check", "--new-window", ORIGIN + "/web/"],
+                              "--no-first-run", "--no-default-browser-check",
+                              *flags, "--new-window", ORIGIN + "/web/"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **detached_kwargs())
+            self._note_flags(flags)
             for _ in range(60):
                 self.cancel()
                 address = endpoint()
@@ -125,6 +131,26 @@ class BrowserAdapter:
             except Exception:
                 pass
         page.on("dialog", on_dialog)
+
+    def _flags_marker(self):
+        return APP_DIR / "chrome-flags.json"
+
+    def _note_flags(self, flags):
+        """Remember which flags the running window was started with."""
+        try:
+            self._flags_marker().write_text(json.dumps(flags, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+
+    def _warn_stale_flags(self, flags):
+        # A window left open from before an upgrade keeps its old flags; without
+        # this note the background-throttling settings would silently not apply.
+        try:
+            running = json.loads(self._flags_marker().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            running = None
+        if running != flags:
+            self.emit("log", "专用浏览器仍是旧的启动参数；关闭该 Chrome 窗口后重新运行即可生效。")
 
     def login(self):
         self.connect()
@@ -164,7 +190,6 @@ class BrowserAdapter:
                 detail = c["detail"]
                 key = hashlib.sha256((c["name"] + "|" + detail).encode()).hexdigest()[:20]
                 result.append(Course(key, c["name"], "", detail))
-        self.catalog.bring_to_front()
         return result
 
     def open_course(self, course):
@@ -273,7 +298,6 @@ class BrowserAdapter:
             self.catalog.wait_for_timeout(250)
         if not self.player:
             raise Blocked("视频窗口未打开，可能被弹窗拦截。")
-        self.player.bring_to_front()
         video.url = self.player.url
         end = time.monotonic() + 45
         while time.monotonic() < end:
@@ -374,8 +398,6 @@ class BrowserAdapter:
             self.catalog.reload(wait_until="domcontentloaded")
         rows = self._rows()
         row = next((r for r in rows if r["id"] == video.id), None)
-        if self.player and not self.player.is_closed():
-            self.player.bring_to_front()
         return completion(row["progress"]) if row else None
 
     def pause_video(self):

@@ -112,6 +112,23 @@ def notify_candidates() -> list[Path]:
     return [home / ".local" / "bin" / NOTIFY_NAME]
 
 
+def chrome_background_flags() -> list[str]:
+    """Keep the dedicated window working while it stays behind other windows.
+
+    Chrome slows down occluded and background windows. The platform reports
+    progress from page scripts, so that throttling could make a finished video
+    look unrecorded; the player is driven over CDP and is unaffected either way.
+    """
+    flags = ["--disable-background-timer-throttling",
+             "--disable-backgrounding-occluded-windows",
+             "--disable-renderer-backgrounding"]
+    if IS_WINDOWS:
+        # Windows lowers the priority of fully covered windows through its own
+        # occlusion detection, which the flags above do not cover.
+        flags.append("--disable-features=CalculateNativeWinOcclusion")
+    return flags
+
+
 def split_command(command: str) -> list[str]:
     """Split a user supplied notify command, tolerating Windows quoting.
 

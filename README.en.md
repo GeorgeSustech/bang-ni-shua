@@ -93,6 +93,8 @@ Exit codes: `0` all opened videos completed · `1` unfinished items remain · `2
 
 The program plays videos at normal speed in order. If it encounters an unrecognized dialog, in-video question, quiz, or a stuck page, it records the reason, sends a notification, and attempts the next video. If playback ends but the platform has not recorded completion, it refreshes the page and checks again after one hour while continuing with other videos. A status notification is sent every six hours, and an exit report is sent when the queue finishes.
 
+The dedicated Chrome window is no longer brought to the front while videos play: it stays where you put it and progress is reported in the terminal. Only “打开登录窗口” raises it, because the QR code has to be scanned. The launch flags also turn off Chrome's throttling of background and occluded windows, so the platform's own progress reporting is not slowed down.
+
 ## 4. Feishu notifications and privacy
 
 The source code, README files, installer, and commit history contain no personal webhook, password, cookie, or login information. The existing local `codex-feishu-notify` helper is preferred; its secret is never copied into this repository. macOS looks for `~/.local/bin/codex-feishu-notify`; Windows looks for `codex-feishu-notify.cmd`, `.bat`, or `.exe` under `%USERPROFILE%\.local\bin\`.
@@ -126,6 +128,6 @@ cd D:\path\to\bang-ni-shua
 .\.venv\Scripts\python.exe cli.py status
 ```
 
-All cross-platform differences live in `platform_support.py` (data directory, Chrome paths, detached process flags, notification command parsing, sleep blocking); `core.py` and `browser.py` contain no system branches.
+All cross-platform differences live in `platform_support.py` (data directory, Chrome paths, detached process flags, Chrome background flags, notification command parsing, sleep blocking); `core.py` and `browser.py` contain no system branches.
 
 The project uses Playwright for Python and controls the installed Google Chrome browser, so `playwright install` is not needed. Whether a video is finally counted by Rain Classroom is determined by the platform's own displayed status; the program lists completed, blocked, and unrecorded-after-recheck videos separately.

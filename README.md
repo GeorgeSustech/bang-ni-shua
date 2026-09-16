@@ -93,6 +93,8 @@ cd D:\path\to\bang-ni-shua
 
 程序按正常倍速依次播放视频，遇到无法识别的弹窗、弹题、测验或页面卡住，会记录原因、发送通知并尝试下一节。视频播放结束但平台未记入进度时，程序会刷新页面并在一小时后复查；复查期间继续播放其他视频。运行期间每 6 小时发送一次状态，队列结束后发送退出结果。
 
+播放过程中程序不会再把专用 Chrome 窗口切到前台，窗口停在你放它的地方，进度显示在终端里；只有点击“打开登录窗口”需要扫码时会主动调前台。启动参数同时关闭了 Chrome 对后台、被遮挡窗口的节流，避免平台页面自己的进度上报被拖慢。
+
 ## 4. 飞书通知和隐私
 
 代码、README、安装包和提交历史不包含任何个人 webhook、密码、Cookie 或登录信息。本机已有的 `codex-feishu-notify` 会优先使用；仓库中没有复制它读取的密钥。macOS 上会查找 `~/.local/bin/codex-feishu-notify`，Windows 上会查找 `%USERPROFILE%\.local\bin\` 下的 `codex-feishu-notify.cmd`、`.bat` 或 `.exe`。
@@ -126,6 +128,6 @@ cd D:\path\to\bang-ni-shua
 .\.venv\Scripts\python.exe cli.py status
 ```
 
-跨平台相关差异集中在 `platform_support.py`（数据目录、Chrome 路径、独立进程标志、通知命令解析、阻止睡眠），`core.py` 与 `browser.py` 不含系统判断。
+跨平台相关差异集中在 `platform_support.py`（数据目录、Chrome 路径、独立进程标志、后台运行用的 Chrome 参数、通知命令解析、阻止睡眠），`core.py` 与 `browser.py` 不含系统判断。
 
 本项目依赖 Playwright Python；浏览器控制使用已安装的 Google Chrome，因此不需要执行 `playwright install` 下载额外浏览器。课程视频是否最终计入平台，仍以雨课堂页面显示的状态为准；程序会把视频已完成、受阻和复查未记入的项目分别列出。
