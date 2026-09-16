@@ -60,11 +60,12 @@ If Chrome is not installed, use the [official Google Chrome installation page](h
 ### 3.2 Windows command line
 
 1. Double-click `安装帮你刷环境.cmd`: it checks for Python 3.11+, creates `.venv`, installs dependencies, and checks Chrome. The first install downloads packages from the network.
-2. Double-click `启动帮你刷.cmd` for the guided flow: enter a course keyword, pick a class, review the video list, confirm, and run. On first use it offers to open the login window.
+2. Double-click `启动帮你刷.cmd` for a menu: `1` start/resume (Enter picks it), `2` change course, `3` change speed, `4` show progress, `0` exit. The header shows the current course keyword and speed, and speed changes are saved immediately. After choosing: pick a class, review the video list, confirm, and run; on first use it offers to open the login window.
 3. Or use the subcommands directly:
 
 ```powershell
 cd D:\path\to\bang-ni-shua
+.\.venv\Scripts\python.exe cli.py doctor --input     # print environment info and probe keyboard input
 .\.venv\Scripts\python.exe cli.py login          # open the dedicated Chrome window and log in
 .\.venv\Scripts\python.exe cli.py courses 英语    # list classes whose name contains “英语”
 .\.venv\Scripts\python.exe cli.py videos 英语     # review the video list without playing
@@ -72,6 +73,8 @@ cd D:\path\to\bang-ni-shua
 .\.venv\Scripts\python.exe cli.py run 英语 --speed 1.5   # play at 1.5x and remember the setting
 .\.venv\Scripts\python.exe cli.py status          # show saved progress and the last result
 ```
+
+If typing in the window does nothing, a click probably put the console into selection mode; press `Esc` inside the window. You can also skip the menu entirely: `启动帮你刷.cmd run 课程关键字 --speed 1.5`.
 
 Controls while running:
 

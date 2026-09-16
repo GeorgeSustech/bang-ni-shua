@@ -60,11 +60,12 @@ GitHub 的仓库 URL 使用 ASCII 名称 `bang-ni-shua`（GitHub 不允许中文
 ### 3.2 Windows 命令行版
 
 1. 双击 `安装帮你刷环境.cmd`：检查 Python 3.11+、创建 `.venv`、安装依赖并检查 Chrome。首次安装会联网下载依赖。
-2. 双击 `启动帮你刷.cmd` 进入向导：输入课程名称关键字 → 选择班级 → 核对视频列表 → 确认开始。首次使用会提示先打开登录窗口扫码。
+2. 双击 `启动帮你刷.cmd` 进入菜单：`1` 开始 / 继续（直接回车就是它）、`2` 更换课程、`3` 更改倍速、`4` 查看进度、`0` 退出。菜单顶部会显示当前课程关键字和倍速，改完立刻保存。选定后流程是：选择班级 → 核对视频列表 → 确认开始；首次使用会提示先打开登录窗口扫码。
 3. 也可以在终端里按需执行子命令：
 
 ```powershell
 cd D:\path\to\bang-ni-shua
+.\.venv\Scripts\python.exe cli.py doctor --input     # 打印环境信息并检测窗口能否读取键盘
 .\.venv\Scripts\python.exe cli.py login          # 打开专用 Chrome 窗口扫码登录
 .\.venv\Scripts\python.exe cli.py courses 英语    # 列出名称包含“英语”的课程班级
 .\.venv\Scripts\python.exe cli.py videos 英语     # 核对视频列表，不播放
@@ -72,6 +73,8 @@ cd D:\path\to\bang-ni-shua
 .\.venv\Scripts\python.exe cli.py run 英语 --speed 1.5   # 1.5 倍速播放并记住这个设置
 .\.venv\Scripts\python.exe cli.py status          # 查看本地保存的进度和上次结果
 ```
+
+如果窗口里键盘没有反应，通常是点到了窗口导致进入"选择模式"，在窗口内按一下 `Esc` 即可；也可以用 `启动帮你刷.cmd run 课程关键字 --speed 1.5` 这种带参数的方式跳过菜单。
 
 运行期间的控制：
 

@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+import platform
 import signal
 import sys
 import threading
@@ -27,7 +29,7 @@ from datetime import datetime
 from browser import SPEED_RANGE, BrowserAdapter, normalize, normalize_speed
 from core import (APP_DIR, STATUS, Blocked, Engine, GlobalBlock, Notifier, Store,
                   atomic_json, read_json)
-from platform_support import IS_WINDOWS, SleepInhibitor
+from platform_support import IS_WINDOWS, SleepInhibitor, chrome_path
 
 VERSION = "1.0.0"
 PAUSE_KEYS = {"p", "pause", "暂停", "c", "continue", "继续", "回车", ""}
@@ -430,29 +432,130 @@ def command_status(args) -> int:
     return 0
 
 
+def command_doctor(args) -> int:
+    """Report what the command line version sees, for troubleshooting."""
+    print(f"Python：{sys.version.split()[0]}　{sys.executable}")
+    print(f"平台：{platform.platform()}")
+    print(f"数据目录：{APP_DIR}（存在={APP_DIR.exists()}）")
+    print(f"标准输入：isatty={sys.stdin.isatty()} encoding={getattr(sys.stdin, 'encoding', '?')}"
+          f"　标准输出：isatty={sys.stdout.isatty()} encoding={getattr(sys.stdout, 'encoding', '?')}")
+    if IS_WINDOWS:
+        try:
+            import ctypes
+            print(f"控制台代码页：输入={ctypes.windll.kernel32.GetConsoleCP()}"
+                  f"　输出={ctypes.windll.kernel32.GetConsoleOutputCP()}")
+        except Exception:
+            pass
+    print(f"Chrome：{chrome_path() or '未找到'}")
+    print(f"设置：{load_settings()}")
+    webhook = "已设置" if os.environ.get("COURSEPLAYER_FEISHU_WEBHOOK") else "未设置"
+    command = "已设置" if os.environ.get("COURSEPLAYER_NOTIFY_COMMAND") else "未设置"
+    print(f"环境变量：PYTHONUTF8={os.environ.get('PYTHONUTF8', '')}"
+          f"　飞书 webhook={webhook}　通知命令={command}")
+    if not args.input_probe:
+        return 0
+    print("正在检测键盘输入（3 秒内没有回车就说明能正常等待输入）……")
+    result = {}
+
+    def probe():
+        try:
+            result["value"] = input()
+        except EOFError:
+            result["error"] = "输入流已结束（EOF）"
+        except Exception as exc:
+            result["error"] = f"{type(exc).__name__}: {exc}"
+
+    thread = threading.Thread(target=probe, daemon=True)
+    thread.start()
+    thread.join(3)
+    if thread.is_alive():
+        print("输入正常：程序会等待你按回车。")
+        return 0
+    print(f"！输入不可用：{result.get('error', result.get('value'))}")
+    return 1
+
+
 def ask(question: str, default: str = "") -> str | None:
     """Prompt once; None means the user cancelled or input ended."""
     suffix = f"（回车 = {default}）" if default else ""
     try:
         answer = input(f"{question}{suffix}：").strip()
-    except (EOFError, KeyboardInterrupt):
+    except (EOFError, KeyboardInterrupt, OSError):
         print()
         return None
     return answer or default
 
 
+def home_screen(name: str, speed: float) -> None:
+    """Show what the next run would use, before anything touches the browser."""
+    print()
+    print(f"课程关键字：{name or '（未设置）'}　·　倍速：x{speed:g}")
+    last = load_json(APP_DIR / "last-result.json", {})
+    if last:
+        when = datetime.fromtimestamp(last.get("time", 0)).strftime("%Y-%m-%d %H:%M")
+        lines = str(last.get("result", "")).splitlines()
+        phase = next((line for line in lines if line.startswith("状态：")), "")
+        counts = next((line for line in lines if line.startswith("已完成")), "")
+        print(f"上次运行：{when}　{phase}　{counts}")
+    print("请选择：输入序号后按回车（直接回车 = 1）")
+    print("  1  开始 / 继续播放")
+    print("  2  更换课程")
+    print(f"  3  更改倍速（当前 x{speed:g}，范围 {SPEED_RANGE[0]:g}–{SPEED_RANGE[1]:g}）")
+    print("  4  查看本地进度和上次结果")
+    print("  0  退出")
+
+
+def choose_start_options(args):
+    """The menu behind the double-click launcher; None means the user left."""
+    name = str(load_settings().get("course_name", "") or "")
+    speed = resolve_speed()
+    while True:
+        home_screen(name, speed)
+        choice = ask("请输入序号", "1")
+        if choice is None:
+            return None
+        choice = choice.strip().casefold()
+        if choice in {"0", "q", "退出", "exit"}:
+            return None
+        if choice in {"2", "课程"}:
+            typed = ask("新的课程名称关键字", name)
+            if typed is None:
+                return None
+            name = typed.strip() or name
+        elif choice in {"3", "倍速"}:
+            typed = ask(f"播放倍速（{SPEED_RANGE[0]:g}–{SPEED_RANGE[1]:g}，1 为原速）", f"{speed:g}")
+            if typed is None:
+                return None
+            speed = normalize_speed(typed)
+            save_settings(speed=speed)
+            print(f"倍速已保存：x{speed:g}")
+        elif choice in {"4", "进度", "状态"}:
+            command_status(args)
+        elif choice in {"1", "开始", ""}:
+            return name, speed
+        else:
+            print("请输入 0–4 之间的序号。")
+
+
 def command_wizard(args) -> int:
-    """Interactive flow for the double-click launcher."""
+    """Interactive menu for the double-click launcher."""
+    if not sys.stdin.isatty():
+        print("！这个窗口不能输入文字，请改用带参数的运行方式，例如：")
+        print("   .\\.venv\\Scripts\\python.exe cli.py run 课程关键字 --speed 1.5")
+        return 3
+    print("帮你刷 · 命令行向导（Ctrl+C 退出；如果键盘输入没有反应，在窗口里按一下 Esc）")
+    chosen = choose_start_options(args)
+    if chosen is None:
+        print("已退出。")
+        return 0
+    name, speed = chosen
+    if not name:
+        print("还没有课程关键字：请重新运行向导，选择 2 更换课程。")
+        return 0
     reporter = Reporter()
-    adapter = BrowserAdapter(reporter.emit)
+    adapter = BrowserAdapter(reporter.emit, speed=speed)
     notifier = Notifier(reporter.emit)
     try:
-        print("帮你刷 · 命令行向导（Ctrl+C 可随时退出）")
-        command_status(args)
-        name = ask("\n课程名称关键字", load_settings().get("course_name", ""))
-        if name is None or not name:
-            print("已取消。")
-            return 0
         courses = None
         for attempt in range(2):
             try:
@@ -465,7 +568,7 @@ def command_wizard(args) -> int:
                 adapter.login()
                 ask("在专用 Chrome 窗口完成扫码登录后按回车继续")
         if not courses:
-            print(f"没有找到名称包含“{name}”的课程班级。")
+            print(f"没有找到名称包含“{name}”的课程班级；重新运行向导可以选 2 更换课程。")
             return 1
         save_settings(course_name=name)
         if len(courses) == 1:
@@ -482,15 +585,8 @@ def command_wizard(args) -> int:
             course = courses[int(picked) - 1]
         print()
         print_videos(adapter.list_videos(course))
-        typed = ask(f"\n播放倍速（{SPEED_RANGE[0]:g}–{SPEED_RANGE[1]:g}，回车保持）",
-                    f"{resolve_speed():g}")
-        if typed is None:
-            print("已取消。")
-            return 0
-        adapter.speed = normalize_speed(typed)
-        save_settings(speed=adapter.speed)
-        print(speed_notice(adapter.speed))
-        answer = ask("\n确认开始播放？", "y")
+        print(speed_notice(speed))
+        answer = ask("确认开始播放？", "y")
         if answer is None or answer.strip().casefold() not in {"y", "yes", "是", "确认", "开始"}:
             print("已取消。")
             return 0
@@ -527,6 +623,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--speed", type=float, default=None,
                      help=f"播放倍速，1 为原速（{SPEED_RANGE[0]:g}–{SPEED_RANGE[1]:g}，默认沿用上次保存的值）")
     sub.add_parser("status", help="查看本地保存的进度和上次结果")
+    doctor = sub.add_parser("doctor", help="显示运行环境信息，排查输入、浏览器等问题")
+    doctor.add_argument("--input", dest="input_probe", action="store_true",
+                        help="顺便检测当前窗口能不能读取键盘输入")
     return parser
 
 
@@ -535,13 +634,16 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     APP_DIR.mkdir(parents=True, exist_ok=True)
     handlers = {"login": command_login, "courses": command_courses,
-                "videos": command_videos, "run": command_run, "status": command_status}
+                "videos": command_videos, "run": command_run,
+                "status": command_status, "doctor": command_doctor}
     handler = handlers.get(args.command, command_wizard)
     if args.command is None:
         args.name = ""
         args.class_detail = ""
         args.index = 0
         args.yes = False
+        args.speed = None
+        args.input_probe = False
     try:
         return handler(args)
     except KeyboardInterrupt:
